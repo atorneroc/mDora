@@ -10,7 +10,14 @@ permissions:
   contents: write
   issues: write
 
+concurrency:
+  group: incident-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
+  # ──────────────────────────────────────────────
+  # JOB 1: Registrar incidente al abrir el issue
+  # ──────────────────────────────────────────────
   register-incident:
     name: Registrar incidente
     if: >-
@@ -37,6 +44,7 @@ jobs:
           script: |
             const fs = require('fs');
             const parsed = JSON.parse(process.env.PARSED);
+            const issue = context.payload.issue;
 
             // --- Validar fecha_inicio ---
             const fechaInicioRaw = (parsed.fecha_inicio || '').trim();
@@ -46,7 +54,14 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `❌ **Error de validación:** El campo \`fecha_inicio\` no tiene el formato correcto.\n\nFormato esperado: \`YYYY-MM-DD HH:MM\`\nValor recibido: \`${fechaInicioRaw}\``
+                body: [
+                  '❌ **Error de validación:** El campo `fecha_inicio` no tiene el formato correcto.',
+                  '',
+                  `Formato esperado: \`YYYY-MM-DD HH:MM\``,
+                  `Valor recibido: \`${fechaInicioRaw || '(vacío)'}\``,
+                  '',
+                  '> 💡 Para corregir la fecha de inicio, comenta: `/fecha_inicio YYYY-MM-DD HH:MM`'
+                ].join('\n')
               });
               core.setFailed('fecha_inicio inválida');
               return;
@@ -58,7 +73,11 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `❌ **Error de validación:** La fecha \`${fechaInicioRaw}\` no es una fecha válida.`
+                body: [
+                  `❌ **Error de validación:** La fecha \`${fechaInicioRaw}\` no es una fecha válida.`,
+                  '',
+                  '> 💡 Para corregir la fecha de inicio, comenta: `/fecha_inicio YYYY-MM-DD HH:MM`'
+                ].join('\n')
               });
               core.setFailed('fecha_inicio inválida');
               return;
@@ -68,15 +87,13 @@ jobs:
             let incidents = [];
             const filePath = 'data/incidents.json';
             try {
-              const content = fs.readFileSync(filePath, 'utf8');
-              incidents = JSON.parse(content);
+              incidents = JSON.parse(fs.readFileSync(filePath, 'utf8'));
             } catch (e) {
               incidents = [];
             }
 
-            // --- Verificar duplicado ---
-            const exists = incidents.find(i => i.id === context.issue.number);
-            if (exists) {
+            // --- Inmutabilidad: si ya existe, no re-registrar ---
+            if (incidents.find(i => i.id === context.issue.number)) {
               core.info(`Incidente #${context.issue.number} ya registrado, omitiendo.`);
               return;
             }
@@ -89,20 +106,19 @@ jobs:
             let estado = 'abierto';
 
             if (fechaSolucionRaw && dateRegex.test(fechaSolucionRaw)) {
-              fechaSolucion = new Date(fechaSolucionRaw.replace(' ', 'T') + ':00');
-              if (!isNaN(fechaSolucion.getTime()) && fechaSolucion > fechaInicio) {
+              const fsd = new Date(fechaSolucionRaw.replace(' ', 'T') + ':00');
+              if (!isNaN(fsd.getTime()) && fsd > fechaInicio) {
+                fechaSolucion = fsd;
                 mttrMinutes = Math.round((fechaSolucion - fechaInicio) / 60000);
                 mttrHours = parseFloat((mttrMinutes / 60).toFixed(2));
                 estado = 'resuelto';
-              } else {
-                fechaSolucion = null;
               }
             }
 
             // --- Construir registro ---
             const incident = {
               id: context.issue.number,
-              title: context.issue.title,
+              title: issue.title,
               fecha_inicio: fechaInicio.toISOString().replace('Z', '').split('.')[0],
               fecha_solucion: fechaSolucion ? fechaSolucion.toISOString().replace('Z', '').split('.')[0] : null,
               mttr_minutes: mttrMinutes,
@@ -112,17 +128,17 @@ jobs:
               solicitante: parsed.solicitante || context.actor,
               servicio_afectado: parsed.servicio_afectado || 'No especificado',
               estado: estado,
-              created_at: context.issue.created_at,
-              issue_url: context.issue.html_url
+              created_at: issue.created_at,
+              issue_url: issue.html_url
             };
 
             incidents.push(incident);
             fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
 
             // --- Etiquetar issue ---
-            const severidadLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
+            const sevLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
             const labelsToAdd = ['incident'];
-            if (severidadLabel) labelsToAdd.push(severidadLabel);
+            if (sevLabel) labelsToAdd.push(sevLabel);
             labelsToAdd.push(estado === 'resuelto' ? 'resolved' : 'open');
 
             await github.rest.issues.addLabels({
@@ -132,7 +148,7 @@ jobs:
               labels: labelsToAdd
             });
 
-            // --- Cerrar issue si está resuelto ---
+            // --- Cerrar issue si resuelto ---
             if (estado === 'resuelto') {
               await github.rest.issues.update({
                 owner: context.repo.owner,
@@ -148,39 +164,43 @@ jobs:
               ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
               : 'N/A';
 
-            let summaryTable = '| # | Título | Severidad | Estado | MTTR (min) |\n';
-            summaryTable += '|---|--------|-----------|--------|------------|\n';
+            let table = '| # | Título | Severidad | Estado | MTTR (min) |\n';
+            table += '|---|--------|-----------|--------|------------|\n';
             for (const inc of incidents.slice(-10)) {
-              summaryTable += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.severidad} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
+              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.severidad} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
             }
 
-            const commentBody = `## 📋 Incidente registrado
-
-            **ID:** #${incident.id}
-            **Severidad:** ${incident.severidad}
-            **Tipo:** ${incident.tipo_error}
-            **Servicio afectado:** ${incident.servicio_afectado}
-            **Estado:** ${incident.estado}
-            ${incident.mttr_minutes ? `**MTTR:** ${incident.mttr_minutes} minutos (${incident.mttr_hours} horas)` : '**MTTR:** ⏳ Pendiente de resolución'}
-
-            ---
-
-            ### 📊 Resumen de incidentes (últimos 10)
-            ${summaryTable}
-
-            **MTTR promedio (resueltos):** ${avgMttr} minutos
-            **Total incidentes:** ${incidents.length} | **Resueltos:** ${resueltos.length} | **Abiertos:** ${incidents.length - resueltos.length}
-
-            ${estado !== 'resuelto' ? '> 💡 Para resolver este incidente, comenta: `/resolver YYYY-MM-DD HH:MM`' : '> ✅ Este incidente fue registrado como resuelto.'}`.replace(/^            /gm, '');
+            const body = [
+              '## 📋 Incidente registrado',
+              '',
+              `**ID:** #${incident.id}`,
+              `**Severidad:** ${incident.severidad}`,
+              `**Tipo:** ${incident.tipo_error}`,
+              `**Servicio afectado:** ${incident.servicio_afectado}`,
+              `**Estado:** ${incident.estado}`,
+              incident.mttr_minutes
+                ? `**MTTR:** ${incident.mttr_minutes} minutos (${incident.mttr_hours} horas)`
+                : '**MTTR:** ⏳ Pendiente de resolución',
+              '',
+              '---',
+              '',
+              '### 📊 Resumen de incidentes (últimos 10)',
+              table,
+              `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
+              `**Total incidentes:** ${incidents.length} | **Resueltos:** ${resueltos.length} | **Abiertos:** ${incidents.length - resueltos.length}`,
+              '',
+              estado !== 'resuelto'
+                ? '> 💡 Para resolver este incidente, comenta: `/resolver YYYY-MM-DD HH:MM`'
+                : '> ✅ Este incidente fue registrado como resuelto.'
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: commentBody
+              body
             });
 
-            // Exportar para commit
             core.exportVariable('INCIDENT_PROCESSED', 'true');
         env:
           PARSED: ${{ steps.parse.outputs.jsonString }}
@@ -194,6 +214,174 @@ jobs:
           git diff --cached --quiet || git commit -m "📝 Registrar incidente #${{ github.event.issue.number }}"
           git push
 
+  # ──────────────────────────────────────────────────────
+  # JOB 2: Corregir fecha de inicio via /fecha_inicio
+  # ──────────────────────────────────────────────────────
+  fix-fecha-inicio:
+    name: Corregir fecha de inicio
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      contains(github.event.comment.body, '/fecha_inicio') &&
+      (contains(github.event.issue.labels.*.name, 'incident') ||
+      startsWith(github.event.issue.title, '[INCIDENTE]'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Parsear formulario del issue
+        id: parse
+        uses: stefanbuck/github-issue-parser@v3
+        with:
+          template-path: .github/ISSUE_TEMPLATE/incident-report.yml
+
+      - name: Registrar con fecha corregida
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const parsed = JSON.parse(process.env.PARSED);
+            const issue = context.payload.issue;
+            const commentText = context.payload.comment.body.trim();
+
+            // --- Parsear comando ---
+            const match = commentText.match(/^\/fecha_inicio\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
+            if (!match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '❌ **Formato inválido.** Usa: `/fecha_inicio YYYY-MM-DD HH:MM`\n\nEjemplo: `/fecha_inicio 2026-04-08 09:30`'
+              });
+              core.setFailed('Comando inválido');
+              return;
+            }
+
+            const fechaInicioRaw = match[1];
+            const fechaInicio = new Date(fechaInicioRaw.replace(' ', 'T') + ':00');
+            if (isNaN(fechaInicio.getTime())) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `❌ **Fecha inválida:** \`${fechaInicioRaw}\``
+              });
+              core.setFailed('Fecha inválida');
+              return;
+            }
+
+            // --- Leer incidentes ---
+            const filePath = 'data/incidents.json';
+            let incidents = [];
+            try {
+              incidents = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            } catch (e) {
+              incidents = [];
+            }
+
+            // --- Inmutabilidad: si ya fue registrado, no permitir cambio ---
+            if (incidents.find(i => i.id === context.issue.number)) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: '⚠️ La **fecha de inicio** ya fue registrada y no se puede modificar.'
+              });
+              return;
+            }
+
+            // --- Registrar incidente con fecha corregida ---
+            const incident = {
+              id: context.issue.number,
+              title: issue.title,
+              fecha_inicio: fechaInicio.toISOString().replace('Z', '').split('.')[0],
+              fecha_solucion: null,
+              mttr_minutes: null,
+              mttr_hours: null,
+              tipo_error: parsed.tipo_error || 'No especificado',
+              severidad: parsed.severidad || 'No especificada',
+              solicitante: parsed.solicitante || context.actor,
+              servicio_afectado: parsed.servicio_afectado || 'No especificado',
+              estado: 'abierto',
+              created_at: issue.created_at,
+              issue_url: issue.html_url
+            };
+
+            incidents.push(incident);
+            fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
+
+            // --- Etiquetar ---
+            const sevLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
+            const labelsToAdd = ['incident'];
+            if (sevLabel) labelsToAdd.push(sevLabel);
+            labelsToAdd.push('open');
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: labelsToAdd
+            });
+
+            // --- Comentar resumen ---
+            const resueltos = incidents.filter(i => i.estado === 'resuelto');
+            const avgMttr = resueltos.length > 0
+              ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
+              : 'N/A';
+
+            let table = '| # | Título | Severidad | Estado | MTTR (min) |\n';
+            table += '|---|--------|-----------|--------|------------|\n';
+            for (const inc of incidents.slice(-10)) {
+              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.severidad} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
+            }
+
+            const body = [
+              '## 📋 Incidente registrado (fecha de inicio corregida)',
+              '',
+              `**ID:** #${incident.id}`,
+              `**Fecha de inicio:** ${incident.fecha_inicio}`,
+              `**Severidad:** ${incident.severidad}`,
+              `**Tipo:** ${incident.tipo_error}`,
+              `**Servicio afectado:** ${incident.servicio_afectado}`,
+              `**Estado:** abierto`,
+              '**MTTR:** ⏳ Pendiente de resolución',
+              '',
+              '---',
+              '',
+              '### 📊 Resumen de incidentes (últimos 10)',
+              table,
+              `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
+              `**Total incidentes:** ${incidents.length} | **Resueltos:** ${resueltos.length} | **Abiertos:** ${incidents.length - resueltos.length}`,
+              '',
+              '> 💡 Para resolver este incidente, comenta: `/resolver YYYY-MM-DD HH:MM`'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+            core.exportVariable('INCIDENT_PROCESSED', 'true');
+        env:
+          PARSED: ${{ steps.parse.outputs.jsonString }}
+
+      - name: Commit cambios
+        if: env.INCIDENT_PROCESSED == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/incidents.json
+          git diff --cached --quiet || git commit -m "📝 Registrar incidente #${{ github.event.issue.number }} (fecha corregida)"
+          git push
+
+  # ──────────────────────────────────────────────
+  # JOB 3: Resolver incidente via /resolver
+  # ──────────────────────────────────────────────
   resolve-incident:
     name: Resolver incidente via comando
     if: >-
@@ -265,36 +453,50 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `❌ No se encontró el incidente #${context.issue.number} en el registro.`
+                body: [
+                  '❌ No se encontró el incidente en el registro.',
+                  '',
+                  'Esto ocurre porque la **fecha de inicio** no fue válida al crear el issue.',
+                  '',
+                  '> 💡 Primero corrige la fecha de inicio comentando: `/fecha_inicio YYYY-MM-DD HH:MM`',
+                  '> Luego podrás resolver con: `/resolver YYYY-MM-DD HH:MM`'
+                ].join('\n')
               });
-              core.setFailed('Incidente no encontrado');
+              core.setFailed('Incidente no registrado — fecha_inicio pendiente');
               return;
             }
 
             const incident = incidents[idx];
+
+            // --- Inmutabilidad: verificar que no esté ya resuelto ---
             if (incident.estado === 'resuelto') {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `ℹ️ Este incidente ya fue marcado como resuelto el ${incident.fecha_solucion}.`
+                body: [
+                  `⚠️ Este incidente ya fue resuelto el **${incident.fecha_solucion}** con un MTTR de **${incident.mttr_minutes} minutos**.`,
+                  '',
+                  'La fecha de solución no se puede modificar.'
+                ].join('\n')
               });
               return;
             }
 
-            // --- Calcular MTTR ---
+            // --- Validar fecha_solucion > fecha_inicio ---
             const fechaInicio = new Date(incident.fecha_inicio);
             if (fechaSolucion <= fechaInicio) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `❌ La fecha de solución (\`${fechaSolucionRaw}\`) debe ser posterior a la fecha de inicio (\`${incident.fecha_inicio}\`).`
+                body: `❌ La fecha de solución (\`${fechaSolucionRaw}\`) debe ser **posterior** a la fecha de inicio (\`${incident.fecha_inicio}\`).`
               });
               core.setFailed('Fecha de solución anterior a fecha de inicio');
               return;
             }
 
+            // --- Calcular MTTR ---
             const mttrMinutes = Math.round((fechaSolucion - fechaInicio) / 60000);
             const mttrHours = parseFloat((mttrMinutes / 60).toFixed(2));
 
@@ -337,30 +539,32 @@ jobs:
               ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
               : 'N/A';
 
-            const commentBody = `## ✅ Incidente resuelto
-
-            **ID:** #${incident.id}
-            **Fecha de inicio:** ${incident.fecha_inicio}
-            **Fecha de solución:** ${incidents[idx].fecha_solucion}
-            **MTTR:** ${mttrMinutes} minutos (${mttrHours} horas)
-            **Severidad:** ${incident.severidad}
-            **Servicio afectado:** ${incident.servicio_afectado}
-
-            ---
-
-            ### 📊 Métricas DORA — MTTR
-            | Métrica | Valor |
-            |---------|-------|
-            | MTTR este incidente | ${mttrMinutes} min (${mttrHours} h) |
-            | MTTR promedio global | ${avgMttr} min |
-            | Total incidentes resueltos | ${resueltos.length} |
-            | Total incidentes abiertos | ${incidents.length - resueltos.length} |`.replace(/^            /gm, '');
+            const body = [
+              '## ✅ Incidente resuelto',
+              '',
+              `**ID:** #${incident.id}`,
+              `**Fecha de inicio:** ${incident.fecha_inicio}`,
+              `**Fecha de solución:** ${incidents[idx].fecha_solucion}`,
+              `**MTTR:** ${mttrMinutes} minutos (${mttrHours} horas)`,
+              `**Severidad:** ${incident.severidad}`,
+              `**Servicio afectado:** ${incident.servicio_afectado}`,
+              '',
+              '---',
+              '',
+              '### 📊 Métricas DORA — MTTR',
+              '| Métrica | Valor |',
+              '|---------|-------|',
+              `| MTTR este incidente | ${mttrMinutes} min (${mttrHours} h) |`,
+              `| MTTR promedio global | ${avgMttr} min |`,
+              `| Total incidentes resueltos | ${resueltos.length} |`,
+              `| Total incidentes abiertos | ${incidents.length - resueltos.length} |`
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: commentBody
+              body
             });
 
             core.exportVariable('INCIDENT_RESOLVED', 'true');

@@ -80,12 +80,3 @@ body:
       placeholder: "El servicio X dejó de responder a las 09:30..."
     validations:
       required: true
-
-  - type: input
-    id: fecha_solucion
-    attributes:
-      label: "Fecha y hora de solución (opcional)"
-      description: "Si el incidente ya fue resuelto, indica la fecha. Formato: YYYY-MM-DD HH:MM"
-      placeholder: "2026-04-08 11:45"
-    validations:
-      required: false
