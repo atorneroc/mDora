@@ -64,5 +64,19 @@
     "estado": "abierto",
     "created_at": "2026-04-08T17:44:56Z",
     "issue_url": "https://github.com/atorneroc/mDora/issues/7"
+  },
+  {
+    "id": 9,
+    "title": "[INCIDENTE]",
+    "fecha_inicio": "2026-01-01T10:00:00",
+    "fecha_solucion": null,
+    "mttr_minutes": null,
+    "mttr_hours": null,
+    "tipo_error": "Infraestructura",
+    "solicitante": "asd",
+    "servicio_afectado": "Proyecto A",
+    "estado": "abierto",
+    "created_at": "2026-04-08T17:49:50Z",
+    "issue_url": "https://github.com/atorneroc/mDora/issues/9"
   }
 ]
