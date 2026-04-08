@@ -214,10 +214,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const commentBody = context.payload.comment.body.trim();
+            const commandText = context.payload.comment.body.trim();
 
             // --- Parsear comando ---
-            const match = commentBody.match(/^\/resolver\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
+            const match = commandText.match(/^\/resolver\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
             if (!match) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
