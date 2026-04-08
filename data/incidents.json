@@ -2,14 +2,14 @@
   {
     "id": 3,
     "fecha_inicio": "2026-04-01T10:00:00",
-    "fecha_solucion": null,
-    "mttr_minutes": null,
-    "mttr_hours": null,
+    "fecha_solucion": "2026-04-08T10:00:00",
+    "mttr_minutes": 10080,
+    "mttr_hours": 168,
     "tipo_error": "Infraestructura",
     "severidad": "P1 - Crítico",
     "solicitante": "TEST",
     "servicio_afectado": "Proyecto A",
-    "estado": "abierto"
+    "estado": "resuelto"
   },
   {
     "id": 4,
