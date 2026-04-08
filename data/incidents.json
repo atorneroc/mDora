@@ -22,5 +22,20 @@
     "solicitante": "aaa",
     "servicio_afectado": "Proyecto A",
     "estado": "resuelto"
+  },
+  {
+    "id": 5,
+    "title": "[INCIDENTE]",
+    "fecha_inicio": "2026-01-01T10:00:00",
+    "fecha_solucion": null,
+    "mttr_minutes": null,
+    "mttr_hours": null,
+    "tipo_error": "Infraestructura",
+    "severidad": "P1 - Crítico",
+    "solicitante": "bbb",
+    "servicio_afectado": "Proyecto A",
+    "estado": "abierto",
+    "created_at": "2026-04-08T15:47:49Z",
+    "issue_url": "https://github.com/atorneroc/mDora/issues/5"
   }
 ]
