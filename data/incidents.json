@@ -20,5 +20,35 @@
     "solicitante": "aaa",
     "servicio_afectado": "Proyecto A",
     "estado": "resuelto"
+  },
+  {
+    "id": 5,
+    "title": "[INCIDENTE]",
+    "fecha_inicio": "2026-01-01T10:00:00",
+    "fecha_solucion": "2026-01-02T10:00:00",
+    "mttr_minutes": 1440,
+    "mttr_hours": 24,
+    "tipo_error": "Infraestructura",
+    "severidad": "P1 - Crítico",
+    "solicitante": "bbb",
+    "servicio_afectado": "Proyecto A",
+    "estado": "resuelto",
+    "created_at": "2026-04-08T15:47:49Z",
+    "issue_url": "https://github.com/atorneroc/mDora/issues/5"
+  },
+  {
+    "id": 6,
+    "title": "[INCIDENTE]",
+    "fecha_inicio": "2026-01-01T10:00:00",
+    "fecha_solucion": "2026-01-01T15:00:00",
+    "mttr_minutes": 300,
+    "mttr_hours": 5,
+    "tipo_error": "Infraestructura",
+    "severidad": "P1 - Crítico",
+    "solicitante": "2026-01-01 10:00",
+    "servicio_afectado": "Proyecto A",
+    "estado": "resuelto",
+    "created_at": "2026-04-08T17:02:07Z",
+    "issue_url": "https://github.com/atorneroc/mDora/issues/6"
   }
 ]
