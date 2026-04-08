@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Auditar issues abiertos con fechas inválidas
+        id: audit
         uses: actions/github-script@v7
         with:
           script: |
@@ -28,49 +29,63 @@ jobs:
 
             if (issues.length === 0) {
               core.info('No hay issues de incidentes abiertos.');
+              await core.summary
+                .addHeading('🔍 Auditoría de fechas en incidentes', 2)
+                .addRaw('✅ No hay issues de incidentes abiertos.')
+                .write();
+              core.setOutput('csv', 'Issue,Titulo,Campo,Problema,Valor\n');
               return;
             }
 
-            let problemCount = 0;
+            const results = [];     // { issue, title, field, problem, value }
+            const okCount = { total: issues.length, withProblems: 0 };
 
             for (const issue of issues) {
               const body = issue.body || '';
-              const problems = [];
+              const issueProblems = [];
 
-              // --- Extraer fecha_inicio del body del issue ---
+              // --- Extraer fecha_inicio ---
               const inicioMatch = body.match(/###\s*Fecha y hora de inicio del incidente\s*\n\s*\n\s*(.+)/);
               const fechaInicioRaw = inicioMatch ? inicioMatch[1].trim() : '';
 
               if (!fechaInicioRaw || fechaInicioRaw === '_No response_') {
-                problems.push(`- **fecha_inicio:** no proporcionada`);
+                issueProblems.push({ field: 'fecha_inicio', problem: 'No proporcionada', value: '-' });
               } else if (!dateRegex.test(fechaInicioRaw)) {
-                problems.push(`- **fecha_inicio:** formato incorrecto → \`${fechaInicioRaw}\``);
+                issueProblems.push({ field: 'fecha_inicio', problem: 'Formato incorrecto', value: fechaInicioRaw });
               } else {
                 const d = new Date(fechaInicioRaw.replace(' ', 'T') + ':00');
                 if (isNaN(d.getTime())) {
-                  problems.push(`- **fecha_inicio:** fecha inválida → \`${fechaInicioRaw}\``);
+                  issueProblems.push({ field: 'fecha_inicio', problem: 'Fecha inválida', value: fechaInicioRaw });
                 }
               }
 
-              // --- Extraer fecha_solucion del body del issue ---
+              // --- Extraer fecha_solucion ---
               const finMatch = body.match(/###\s*Fecha y hora de solución\s*\(opcional\)\s*\n\s*\n\s*(.+)/);
               const fechaFinRaw = finMatch ? finMatch[1].trim() : '';
 
               if (fechaFinRaw && fechaFinRaw !== '_No response_') {
                 if (!dateRegex.test(fechaFinRaw)) {
-                  problems.push(`- **fecha_solucion:** formato incorrecto → \`${fechaFinRaw}\``);
+                  issueProblems.push({ field: 'fecha_solucion', problem: 'Formato incorrecto', value: fechaFinRaw });
                 } else {
                   const d = new Date(fechaFinRaw.replace(' ', 'T') + ':00');
                   if (isNaN(d.getTime())) {
-                    problems.push(`- **fecha_solucion:** fecha inválida → \`${fechaFinRaw}\``);
+                    issueProblems.push({ field: 'fecha_solucion', problem: 'Fecha inválida', value: fechaFinRaw });
                   }
                 }
               }
 
-              if (problems.length > 0) {
-                problemCount++;
+              if (issueProblems.length > 0) {
+                okCount.withProblems++;
+                for (const p of issueProblems) {
+                  results.push({
+                    issue: issue.number,
+                    title: issue.title.replace(/\|/g, '-'),
+                    url: issue.html_url,
+                    ...p
+                  });
+                }
 
-                // Verificar si ya se comentó hoy para no duplicar
+                // --- Comentar en el issue (sin duplicar por día) ---
                 const comments = await github.rest.issues.listComments({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -86,6 +101,9 @@ jobs:
                 );
 
                 if (!alreadyNotified) {
+                  const bullets = issueProblems.map(p =>
+                    `- **${p.field}:** ${p.problem}${p.value !== '-' ? ` → \`${p.value}\`` : ''}`
+                  );
                   await github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
@@ -93,7 +111,7 @@ jobs:
                     body: [
                       '🔍 **Auditoría de fechas** — Se detectaron problemas en este incidente:',
                       '',
-                      ...problems,
+                      ...bullets,
                       '',
                       'Formato esperado: `YYYY-MM-DD HH:MM` (ejemplo: `2026-04-08 09:30`)',
                       '',
@@ -105,4 +123,61 @@ jobs:
               }
             }
 
-            core.info(`Auditoría completada: ${problemCount} issue(s) con problemas de ${issues.length} revisados.`);
+            // ─── Generar Job Summary (Markdown) ─────────────────
+            const summary = core.summary
+              .addHeading('🔍 Auditoría de fechas en incidentes', 2)
+              .addRaw(`📅 Ejecutada: ${new Date().toISOString().split('T')[0]}  \n`)
+              .addRaw(`📊 **${okCount.total}** issues revisados | **${okCount.withProblems}** con problemas | **${okCount.total - okCount.withProblems}** correctos\n\n`);
+
+            if (results.length === 0) {
+              summary.addRaw('✅ Todos los issues tienen fechas con formato correcto.\n');
+            } else {
+              const rows = results.map(r => [
+                { data: `<a href="${r.url}">#${r.issue}</a>` },
+                { data: r.title },
+                { data: `<code>${r.field}</code>` },
+                { data: r.problem },
+                { data: r.value === '-' ? '-' : `<code>${r.value}</code>` }
+              ]);
+
+              summary.addTable([
+                [
+                  { data: 'Issue', header: true },
+                  { data: 'Título', header: true },
+                  { data: 'Campo', header: true },
+                  { data: 'Problema', header: true },
+                  { data: 'Valor actual', header: true }
+                ],
+                ...rows
+              ]);
+
+              summary.addRaw('\n> 💡 Correcciones: `/fecha_inicio YYYY-MM-DD HH:MM` o `/fecha_fin YYYY-MM-DD HH:MM`\n');
+            }
+
+            await summary.write();
+
+            // ─── Generar CSV ────────────────────────────────────
+            const csvHeader = 'Issue,Titulo,URL,Campo,Problema,Valor';
+            const csvRows = results.map(r =>
+              `${r.issue},"${r.title}",${r.url},${r.field},"${r.problem}","${r.value}"`
+            );
+            const csvContent = [csvHeader, ...csvRows].join('\n') + '\n';
+            core.setOutput('csv', csvContent);
+
+            core.info(`Auditoría completada: ${okCount.withProblems} issue(s) con problemas de ${okCount.total} revisados.`);
+
+      - name: Guardar reporte CSV
+        run: |
+          mkdir -p audit-report
+          cat <<'CSVEOF' > audit-report/audit-dates.csv
+          ${{ steps.audit.outputs.csv }}
+          CSVEOF
+          # Limpiar espacios iniciales de heredoc indentado
+          sed -i 's/^          //' audit-report/audit-dates.csv
+
+      - name: Subir artefacto CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-dates-report-${{ github.run_id }}
+          path: audit-report/audit-dates.csv
+          retention-days: 30
