@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -11,12 +12,26 @@ jobs:
     name: Revisar fechas con formato incorrecto
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
       - name: Auditar issues abiertos con fechas inválidas
         id: audit
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const dateRegex = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}$/;
+
+            // --- Leer incidents.json para cruzar estado real ---
+            let registeredIncidents = [];
+            try {
+              registeredIncidents = JSON.parse(fs.readFileSync('data/incidents.json', 'utf8'));
+            } catch (e) {
+              core.warning('No se pudo leer data/incidents.json: ' + e.message);
+            }
 
             // --- Obtener issues abiertos con label incident ---
             const issues = await github.paginate(github.rest.issues.listForRepo, {
@@ -33,47 +48,109 @@ jobs:
                 .addHeading('🔍 Auditoría de fechas en incidentes', 2)
                 .addRaw('✅ No hay issues de incidentes abiertos.')
                 .write();
-              core.setOutput('csv', 'Issue,Titulo,Campo,Problema,Valor\n');
+              core.setOutput('csv', 'Issue,Titulo,URL,Campo,Problema,Valor\n');
               return;
             }
 
-            const results = [];     // { issue, title, field, problem, value }
+            const results = [];
             const okCount = { total: issues.length, withProblems: 0 };
 
             for (const issue of issues) {
               const body = issue.body || '';
               const issueProblems = [];
 
-              // --- Extraer fecha_inicio ---
-              const inicioMatch = body.match(/###\s*Fecha y hora de inicio del incidente\s*\n\s*\n\s*(.+)/);
-              const fechaInicioRaw = inicioMatch ? inicioMatch[1].trim() : '';
+              // --- Buscar si el incidente ya fue registrado en el JSON ---
+              const registered = registeredIncidents.find(i => i.id === issue.number);
 
-              if (!fechaInicioRaw || fechaInicioRaw === '_No response_') {
-                issueProblems.push({ field: 'fecha_inicio', problem: 'No proporcionada', value: '-' });
-              } else if (!dateRegex.test(fechaInicioRaw)) {
-                issueProblems.push({ field: 'fecha_inicio', problem: 'Formato incorrecto', value: fechaInicioRaw });
-              } else {
-                const d = new Date(fechaInicioRaw.replace(' ', 'T') + ':00');
-                if (isNaN(d.getTime())) {
-                  issueProblems.push({ field: 'fecha_inicio', problem: 'Fecha inválida', value: fechaInicioRaw });
-                }
-              }
+              // ════════════════════════════════════════════════════
+              // FECHA_INICIO: si ya está en JSON, la fecha fue validada
+              // al registrarse → no reportar.  Solo revisar si NO existe.
+              // ════════════════════════════════════════════════════
+              if (!registered) {
+                const inicioMatch = body.match(/###\s*Fecha y hora de inicio del incidente\s*\n\s*\n\s*(.+)/);
+                const fechaInicioRaw = inicioMatch ? inicioMatch[1].trim() : '';
 
-              // --- Extraer fecha_solucion ---
-              const finMatch = body.match(/###\s*Fecha y hora de solución\s*\(opcional\)\s*\n\s*\n\s*(.+)/);
-              const fechaFinRaw = finMatch ? finMatch[1].trim() : '';
-
-              if (fechaFinRaw && fechaFinRaw !== '_No response_') {
-                if (!dateRegex.test(fechaFinRaw)) {
-                  issueProblems.push({ field: 'fecha_solucion', problem: 'Formato incorrecto', value: fechaFinRaw });
+                if (!fechaInicioRaw || fechaInicioRaw === '_No response_') {
+                  issueProblems.push({ field: 'fecha_inicio', problem: 'No proporcionada', value: '-' });
+                } else if (!dateRegex.test(fechaInicioRaw)) {
+                  issueProblems.push({ field: 'fecha_inicio', problem: 'Formato incorrecto', value: fechaInicioRaw });
                 } else {
-                  const d = new Date(fechaFinRaw.replace(' ', 'T') + ':00');
+                  const d = new Date(fechaInicioRaw.replace(' ', 'T') + ':00');
                   if (isNaN(d.getTime())) {
-                    issueProblems.push({ field: 'fecha_solucion', problem: 'Fecha inválida', value: fechaFinRaw });
+                    issueProblems.push({ field: 'fecha_inicio', problem: 'Fecha inválida', value: fechaInicioRaw });
                   }
                 }
               }
 
+              // ════════════════════════════════════════════════════
+              // FECHA_FIN: si está en JSON y resuelto, ya fue validada.
+              // Si está en JSON pero abierto, revisar comentarios
+              // para detectar intentos fallidos de /fecha_fin.
+              // ════════════════════════════════════════════════════
+              if (registered && registered.estado === 'abierto') {
+                // Buscar el último comentario /fecha_fin de un usuario (no bot)
+                const allComments = await github.paginate(github.rest.issues.listComments, {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  per_page: 100
+                });
+
+                // Filtrar comentarios de usuarios reales con /fecha_fin
+                const fechaFinComments = allComments.filter(c =>
+                  c.user.login !== 'github-actions[bot]' &&
+                  c.body.trim().startsWith('/fecha_fin')
+                );
+
+                if (fechaFinComments.length > 0) {
+                  // Tomar el último intento
+                  const lastAttempt = fechaFinComments[fechaFinComments.length - 1];
+                  const cmdText = lastAttempt.body.trim();
+                  const fechaFinMatch = cmdText.match(/^\/fecha_fin\s+(\S.*)$/);
+
+                  if (!fechaFinMatch) {
+                    issueProblems.push({ field: 'fecha_fin', problem: 'Comando sin fecha', value: cmdText });
+                  } else {
+                    const rawVal = fechaFinMatch[1].trim();
+                    if (!dateRegex.test(rawVal)) {
+                      issueProblems.push({ field: 'fecha_fin', problem: 'Formato incorrecto', value: rawVal });
+                    } else {
+                      const d = new Date(rawVal.replace(' ', 'T') + ':00');
+                      if (isNaN(d.getTime())) {
+                        issueProblems.push({ field: 'fecha_fin', problem: 'Fecha inválida', value: rawVal });
+                      } else {
+                        // Fecha con formato válido pero ¿anterior a inicio?
+                        const fechaInicio = new Date(registered.fecha_inicio);
+                        if (d <= fechaInicio) {
+                          issueProblems.push({
+                            field: 'fecha_fin',
+                            problem: 'Anterior o igual a fecha_inicio',
+                            value: `${rawVal} (inicio: ${registered.fecha_inicio.replace('T', ' ').slice(0, 16)})`
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // También revisar fecha_solucion del body si NO está en JSON
+              if (!registered) {
+                const finMatch = body.match(/###\s*Fecha y hora de solución\s*\(opcional\)\s*\n\s*\n\s*(.+)/);
+                const fechaFinRaw = finMatch ? finMatch[1].trim() : '';
+                if (fechaFinRaw && fechaFinRaw !== '_No response_') {
+                  if (!dateRegex.test(fechaFinRaw)) {
+                    issueProblems.push({ field: 'fecha_fin', problem: 'Formato incorrecto (body)', value: fechaFinRaw });
+                  } else {
+                    const d = new Date(fechaFinRaw.replace(' ', 'T') + ':00');
+                    if (isNaN(d.getTime())) {
+                      issueProblems.push({ field: 'fecha_fin', problem: 'Fecha inválida (body)', value: fechaFinRaw });
+                    }
+                  }
+                }
+              }
+
+              // --- Agregar resultados ---
               if (issueProblems.length > 0) {
                 okCount.withProblems++;
                 for (const p of issueProblems) {
@@ -86,15 +163,15 @@ jobs:
                 }
 
                 // --- Comentar en el issue (sin duplicar por día) ---
-                const comments = await github.rest.issues.listComments({
+                const recentComments = await github.rest.issues.listComments({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
-                  per_page: 10
+                  per_page: 20
                 });
 
                 const today = new Date().toISOString().split('T')[0];
-                const alreadyNotified = comments.data.some(c =>
+                const alreadyNotified = recentComments.data.some(c =>
                   c.user.login === 'github-actions[bot]' &&
                   c.body.includes('🔍 **Auditoría de fechas**') &&
                   c.created_at.startsWith(today)
@@ -159,7 +236,7 @@ jobs:
             // ─── Generar CSV ────────────────────────────────────
             const csvHeader = 'Issue,Titulo,URL,Campo,Problema,Valor';
             const csvRows = results.map(r =>
-              `${r.issue},"${r.title}",${r.url},${r.field},"${r.problem}","${r.value}"`
+              `${r.issue},"${r.title}",${r.url},${r.field},"${r.problem}","${r.value.replace(/"/g, '""')}"`
             );
             const csvContent = [csvHeader, ...csvRows].join('\n') + '\n';
             core.setOutput('csv', csvContent);
@@ -172,7 +249,6 @@ jobs:
           cat <<'CSVEOF' > audit-report/audit-dates.csv
           ${{ steps.audit.outputs.csv }}
           CSVEOF
-          # Limpiar espacios iniciales de heredoc indentado
           sed -i 's/^          //' audit-report/audit-dates.csv
 
       - name: Subir artefacto CSV
