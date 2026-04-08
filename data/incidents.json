@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "id": 3,
+    "fecha_inicio": "2026-04-01T10:00:00",
+    "fecha_solucion": null,
+    "mttr_minutes": null,
+    "mttr_hours": null,
+    "tipo_error": "Infraestructura",
+    "severidad": "P1 - Crítico",
+    "solicitante": "TEST",
+    "servicio_afectado": "Proyecto A",
+    "estado": "abierto"
+  },
+  {
+    "id": 4,
+    "fecha_inicio": "2026-04-02T10:00:00",
+    "fecha_solucion": null,
+    "mttr_minutes": null,
+    "mttr_hours": null,
+    "tipo_error": "Infraestructura",
+    "severidad": "P1 - Crítico",
+    "solicitante": "aaa",
+    "servicio_afectado": "Proyecto A",
+    "estado": "abierto"
+  }
+]
