@@ -1,0 +1,91 @@
+name: "🚨 Reporte de Incidente"
+description: "Formulario para registrar un incidente en el sistema de gestión."
+title: "[INCIDENTE] "
+labels: ["incident"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Reporte de Incidente
+        Completa los siguientes campos para registrar el incidente.
+        **Formato de fechas:** `YYYY-MM-DD HH:MM` (ejemplo: `2026-04-08 09:30`)
+
+  - type: input
+    id: fecha_inicio
+    attributes:
+      label: "Fecha y hora de inicio del incidente"
+      description: "Formato: YYYY-MM-DD HH:MM (ejemplo: 2026-04-08 09:30)"
+      placeholder: "2026-04-08 09:30"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tipo_error
+    attributes:
+      label: "Tipo de error"
+      description: "Selecciona la categoría del incidente."
+      options:
+        - Infraestructura
+        - Código
+        - Base de Datos
+        - Red / Conectividad
+        - Seguridad
+        - Configuración
+        - Otro
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severidad
+    attributes:
+      label: "Severidad"
+      description: "Selecciona el nivel de severidad del incidente."
+      options:
+        - "P1 - Crítico"
+        - "P2 - Alto"
+        - "P3 - Medio"
+        - "P4 - Bajo"
+    validations:
+      required: true
+
+  - type: input
+    id: solicitante
+    attributes:
+      label: "Solicitante"
+      description: "Nombre o usuario de GitHub de quien reporta el incidente."
+      placeholder: "usuario123"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: servicio_afectado
+    attributes:
+      label: "Servicio afectado"
+      description: "Selecciona el servicio o proyecto impactado."
+      options:
+        - Proyecto A
+        - Proyecto B
+        - Proyecto C
+        - Plataforma Interna
+        - API Gateway
+        - Otro
+    validations:
+      required: true
+
+  - type: textarea
+    id: descripcion
+    attributes:
+      label: "Descripción del incidente"
+      description: "Describe el incidente con el mayor detalle posible."
+      placeholder: "El servicio X dejó de responder a las 09:30..."
+    validations:
+      required: true
+
+  - type: input
+    id: fecha_solucion
+    attributes:
+      label: "Fecha y hora de solución (opcional)"
+      description: "Si el incidente ya fue resuelto, indica la fecha. Formato: YYYY-MM-DD HH:MM"
+      placeholder: "2026-04-08 11:45"
+    validations:
+      required: false
