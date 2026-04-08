@@ -6,7 +6,6 @@
     "mttr_minutes": 10080,
     "mttr_hours": 168,
     "tipo_error": "Infraestructura",
-    "severidad": "P1 - Crítico",
     "solicitante": "TEST",
     "servicio_afectado": "Proyecto A",
     "estado": "resuelto"
@@ -18,7 +17,6 @@
     "mttr_minutes": 1,
     "mttr_hours": 0.02,
     "tipo_error": "Infraestructura",
-    "severidad": "P1 - Crítico",
     "solicitante": "aaa",
     "servicio_afectado": "Proyecto A",
     "estado": "resuelto"

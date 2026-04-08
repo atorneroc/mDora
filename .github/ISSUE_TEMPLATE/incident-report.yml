@@ -35,19 +35,6 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: severidad
-    attributes:
-      label: "Severidad"
-      description: "Selecciona el nivel de severidad del incidente."
-      options:
-        - "P1 - Crítico"
-        - "P2 - Alto"
-        - "P3 - Medio"
-        - "P4 - Bajo"
-    validations:
-      required: true
-
   - type: input
     id: solicitante
     attributes:

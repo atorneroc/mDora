@@ -1,0 +1,108 @@
+name: Auditoría de fechas en incidentes
+
+on:
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  audit-dates:
+    name: Revisar fechas con formato incorrecto
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auditar issues abiertos con fechas inválidas
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const dateRegex = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}$/;
+
+            // --- Obtener issues abiertos con label incident ---
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'incident',
+              state: 'open',
+              per_page: 100
+            });
+
+            if (issues.length === 0) {
+              core.info('No hay issues de incidentes abiertos.');
+              return;
+            }
+
+            let problemCount = 0;
+
+            for (const issue of issues) {
+              const body = issue.body || '';
+              const problems = [];
+
+              // --- Extraer fecha_inicio del body del issue ---
+              const inicioMatch = body.match(/###\s*Fecha y hora de inicio del incidente\s*\n\s*\n\s*(.+)/);
+              const fechaInicioRaw = inicioMatch ? inicioMatch[1].trim() : '';
+
+              if (!fechaInicioRaw || fechaInicioRaw === '_No response_') {
+                problems.push(`- **fecha_inicio:** no proporcionada`);
+              } else if (!dateRegex.test(fechaInicioRaw)) {
+                problems.push(`- **fecha_inicio:** formato incorrecto → \`${fechaInicioRaw}\``);
+              } else {
+                const d = new Date(fechaInicioRaw.replace(' ', 'T') + ':00');
+                if (isNaN(d.getTime())) {
+                  problems.push(`- **fecha_inicio:** fecha inválida → \`${fechaInicioRaw}\``);
+                }
+              }
+
+              // --- Extraer fecha_solucion del body del issue ---
+              const finMatch = body.match(/###\s*Fecha y hora de solución\s*\(opcional\)\s*\n\s*\n\s*(.+)/);
+              const fechaFinRaw = finMatch ? finMatch[1].trim() : '';
+
+              if (fechaFinRaw && fechaFinRaw !== '_No response_') {
+                if (!dateRegex.test(fechaFinRaw)) {
+                  problems.push(`- **fecha_solucion:** formato incorrecto → \`${fechaFinRaw}\``);
+                } else {
+                  const d = new Date(fechaFinRaw.replace(' ', 'T') + ':00');
+                  if (isNaN(d.getTime())) {
+                    problems.push(`- **fecha_solucion:** fecha inválida → \`${fechaFinRaw}\``);
+                  }
+                }
+              }
+
+              if (problems.length > 0) {
+                problemCount++;
+
+                // Verificar si ya se comentó hoy para no duplicar
+                const comments = await github.rest.issues.listComments({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  per_page: 10
+                });
+
+                const today = new Date().toISOString().split('T')[0];
+                const alreadyNotified = comments.data.some(c =>
+                  c.user.login === 'github-actions[bot]' &&
+                  c.body.includes('🔍 **Auditoría de fechas**') &&
+                  c.created_at.startsWith(today)
+                );
+
+                if (!alreadyNotified) {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    body: [
+                      '🔍 **Auditoría de fechas** — Se detectaron problemas en este incidente:',
+                      '',
+                      ...problems,
+                      '',
+                      'Formato esperado: `YYYY-MM-DD HH:MM` (ejemplo: `2026-04-08 09:30`)',
+                      '',
+                      '> 💡 Para corregir la fecha de inicio: `/fecha_inicio YYYY-MM-DD HH:MM`',
+                      '> 💡 Para registrar la fecha de solución: `/fecha_fin YYYY-MM-DD HH:MM`'
+                    ].join('\n')
+                  });
+                }
+              }
+            }
+
+            core.info(`Auditoría completada: ${problemCount} issue(s) con problemas de ${issues.length} revisados.`);

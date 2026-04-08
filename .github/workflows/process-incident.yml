@@ -116,6 +116,7 @@ jobs:
             }
 
             // --- Construir registro ---
+            const servicioAfectado = parsed.servicio_afectado || 'No especificado';
             const incident = {
               id: context.issue.number,
               title: issue.title,
@@ -124,9 +125,8 @@ jobs:
               mttr_minutes: mttrMinutes,
               mttr_hours: mttrHours,
               tipo_error: parsed.tipo_error || 'No especificado',
-              severidad: parsed.severidad || 'No especificada',
               solicitante: parsed.solicitante || context.actor,
-              servicio_afectado: parsed.servicio_afectado || 'No especificado',
+              servicio_afectado: servicioAfectado,
               estado: estado,
               created_at: issue.created_at,
               issue_url: issue.html_url
@@ -136,9 +136,7 @@ jobs:
             fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
 
             // --- Etiquetar issue ---
-            const sevLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
             const labelsToAdd = ['incident'];
-            if (sevLabel) labelsToAdd.push(sevLabel);
             labelsToAdd.push(estado === 'resuelto' ? 'resolved' : 'open');
 
             await github.rest.issues.addLabels({
@@ -158,23 +156,23 @@ jobs:
               });
             }
 
-            // --- Comentar resumen ---
-            const resueltos = incidents.filter(i => i.estado === 'resuelto');
-            const avgMttr = resueltos.length > 0
-              ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
+            // --- Comentar resumen (filtrado por servicio afectado) ---
+            const servicioIncidents = incidents.filter(i => i.servicio_afectado === servicioAfectado);
+            const servicioResueltos = servicioIncidents.filter(i => i.estado === 'resuelto');
+            const avgMttr = servicioResueltos.length > 0
+              ? (servicioResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / servicioResueltos.length).toFixed(1)
               : 'N/A';
 
-            let table = '| # | Título | Severidad | Estado | MTTR (min) |\n';
-            table += '|---|--------|-----------|--------|------------|\n';
-            for (const inc of incidents.slice(-10)) {
-              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.severidad} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
+            let table = '| # | Título | Estado | MTTR (min) |\n';
+            table += '|---|--------|--------|------------|\n';
+            for (const inc of servicioIncidents.slice(-10)) {
+              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
             }
 
             const body = [
               '## 📋 Incidente registrado',
               '',
               `**ID:** #${incident.id}`,
-              `**Severidad:** ${incident.severidad}`,
               `**Tipo:** ${incident.tipo_error}`,
               `**Servicio afectado:** ${incident.servicio_afectado}`,
               `**Estado:** ${incident.estado}`,
@@ -184,13 +182,13 @@ jobs:
               '',
               '---',
               '',
-              '### 📊 Resumen de incidentes (últimos 10)',
+              `### 📊 Resumen de incidentes (últimos 10) — ${servicioAfectado}`,
               table,
               `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
-              `**Total incidentes:** ${incidents.length} | **Resueltos:** ${resueltos.length} | **Abiertos:** ${incidents.length - resueltos.length}`,
+              `**Incidentes ${servicioAfectado}:** ${servicioIncidents.length} | **Resueltos:** ${servicioResueltos.length} | **Abiertos:** ${servicioIncidents.length - servicioResueltos.length}`,
               '',
               estado !== 'resuelto'
-                ? '> 💡 Para resolver este incidente, comenta: `/resolver YYYY-MM-DD HH:MM`'
+                ? '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
                 : '> ✅ Este incidente fue registrado como resuelto.'
             ].join('\n');
 
@@ -294,6 +292,7 @@ jobs:
             }
 
             // --- Registrar incidente con fecha corregida ---
+            const servicioAfectado = parsed.servicio_afectado || 'No especificado';
             const incident = {
               id: context.issue.number,
               title: issue.title,
@@ -302,9 +301,8 @@ jobs:
               mttr_minutes: null,
               mttr_hours: null,
               tipo_error: parsed.tipo_error || 'No especificado',
-              severidad: parsed.severidad || 'No especificada',
               solicitante: parsed.solicitante || context.actor,
-              servicio_afectado: parsed.servicio_afectado || 'No especificado',
+              servicio_afectado: servicioAfectado,
               estado: 'abierto',
               created_at: issue.created_at,
               issue_url: issue.html_url
@@ -314,10 +312,7 @@ jobs:
             fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
 
             // --- Etiquetar ---
-            const sevLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
-            const labelsToAdd = ['incident'];
-            if (sevLabel) labelsToAdd.push(sevLabel);
-            labelsToAdd.push('open');
+            const labelsToAdd = ['incident', 'open'];
 
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
@@ -326,16 +321,17 @@ jobs:
               labels: labelsToAdd
             });
 
-            // --- Comentar resumen ---
-            const resueltos = incidents.filter(i => i.estado === 'resuelto');
-            const avgMttr = resueltos.length > 0
-              ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
+            // --- Comentar resumen (filtrado por servicio afectado) ---
+            const servicioIncidents = incidents.filter(i => i.servicio_afectado === servicioAfectado);
+            const servicioResueltos = servicioIncidents.filter(i => i.estado === 'resuelto');
+            const avgMttr = servicioResueltos.length > 0
+              ? (servicioResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / servicioResueltos.length).toFixed(1)
               : 'N/A';
 
-            let table = '| # | Título | Severidad | Estado | MTTR (min) |\n';
-            table += '|---|--------|-----------|--------|------------|\n';
-            for (const inc of incidents.slice(-10)) {
-              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.severidad} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
+            let table = '| # | Título | Estado | MTTR (min) |\n';
+            table += '|---|--------|--------|------------|\n';
+            for (const inc of servicioIncidents.slice(-10)) {
+              table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
             }
 
             const body = [
@@ -343,7 +339,6 @@ jobs:
               '',
               `**ID:** #${incident.id}`,
               `**Fecha de inicio:** ${incident.fecha_inicio}`,
-              `**Severidad:** ${incident.severidad}`,
               `**Tipo:** ${incident.tipo_error}`,
               `**Servicio afectado:** ${incident.servicio_afectado}`,
               `**Estado:** abierto`,
@@ -351,12 +346,12 @@ jobs:
               '',
               '---',
               '',
-              '### 📊 Resumen de incidentes (últimos 10)',
+              `### 📊 Resumen de incidentes (últimos 10) — ${servicioAfectado}`,
               table,
               `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
-              `**Total incidentes:** ${incidents.length} | **Resueltos:** ${resueltos.length} | **Abiertos:** ${incidents.length - resueltos.length}`,
+              `**Incidentes ${servicioAfectado}:** ${servicioIncidents.length} | **Resueltos:** ${servicioResueltos.length} | **Abiertos:** ${servicioIncidents.length - servicioResueltos.length}`,
               '',
-              '> 💡 Para resolver este incidente, comenta: `/resolver YYYY-MM-DD HH:MM`'
+              '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
             ].join('\n');
 
             await github.rest.issues.createComment({
@@ -380,14 +375,14 @@ jobs:
           git push
 
   # ──────────────────────────────────────────────
-  # JOB 3: Resolver incidente via /resolver
+  # JOB 3: Resolver incidente via /fecha_fin
   # ──────────────────────────────────────────────
   resolve-incident:
     name: Resolver incidente via comando
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
-      contains(github.event.comment.body, '/resolver') &&
+      contains(github.event.comment.body, '/fecha_fin') &&
       (contains(github.event.issue.labels.*.name, 'incident') ||
       startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
@@ -405,13 +400,13 @@ jobs:
             const commandText = context.payload.comment.body.trim();
 
             // --- Parsear comando ---
-            const match = commandText.match(/^\/resolver\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
+            const match = commandText.match(/^\/fecha_fin\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})$/);
             if (!match) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: '❌ **Formato inválido.** Usa: `/resolver YYYY-MM-DD HH:MM`\n\nEjemplo: `/resolver 2026-04-08 11:45`'
+                body: '❌ **Formato inválido.** Usa: `/fecha_fin YYYY-MM-DD HH:MM`\n\nEjemplo: `/fecha_fin 2026-04-08 11:45`'
               });
               core.setFailed('Comando inválido');
               return;
@@ -459,7 +454,7 @@ jobs:
                   'Esto ocurre porque la **fecha de inicio** no fue válida al crear el issue.',
                   '',
                   '> 💡 Primero corrige la fecha de inicio comentando: `/fecha_inicio YYYY-MM-DD HH:MM`',
-                  '> Luego podrás resolver con: `/resolver YYYY-MM-DD HH:MM`'
+                  '> Luego podrás resolver con: `/fecha_fin YYYY-MM-DD HH:MM`'
                 ].join('\n')
               });
               core.setFailed('Incidente no registrado — fecha_inicio pendiente');
@@ -533,11 +528,40 @@ jobs:
               state: 'closed'
             });
 
-            // --- Comentar resumen ---
-            const resueltos = incidents.filter(i => i.estado === 'resuelto');
-            const avgMttr = resueltos.length > 0
-              ? (resueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / resueltos.length).toFixed(1)
+            // --- Métricas DORA filtradas por servicio afectado ---
+            const servicioAfectado = incident.servicio_afectado;
+            const servicioIncidents = incidents.filter(i => i.servicio_afectado === servicioAfectado);
+            const servicioResueltos = servicioIncidents.filter(i => i.estado === 'resuelto');
+            const avgMttrServicio = servicioResueltos.length > 0
+              ? (servicioResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / servicioResueltos.length).toFixed(1)
               : 'N/A';
+
+            let tableServicio = '| # | Título | Estado | MTTR (min) |\n';
+            tableServicio += '|---|--------|--------|------------|\n';
+            for (const inc of servicioIncidents.slice(-10)) {
+              tableServicio += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
+            }
+
+            // --- Resumen total (todos los servicios) ---
+            const totalResueltos = incidents.filter(i => i.estado === 'resuelto');
+            const totalAbiertos = incidents.filter(i => i.estado === 'abierto');
+            const avgMttrTotal = totalResueltos.length > 0
+              ? (totalResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / totalResueltos.length).toFixed(1)
+              : 'N/A';
+
+            // Agrupar por servicio para tabla resumen
+            const servicios = [...new Set(incidents.map(i => i.servicio_afectado))];
+            let tableTotal = '| Servicio | Total | Resueltos | Abiertos | MTTR prom. (min) |\n';
+            tableTotal += '|----------|-------|-----------|----------|------------------|\n';
+            for (const svc of servicios) {
+              const svcAll = incidents.filter(i => i.servicio_afectado === svc);
+              const svcResueltos = svcAll.filter(i => i.estado === 'resuelto');
+              const svcAbiertos = svcAll.filter(i => i.estado === 'abierto');
+              const svcMttr = svcResueltos.length > 0
+                ? (svcResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / svcResueltos.length).toFixed(1)
+                : 'N/A';
+              tableTotal += `| ${svc} | ${svcAll.length} | ${svcResueltos.length} | ${svcAbiertos.length} | ${svcMttr} |\n`;
+            }
 
             const body = [
               '## ✅ Incidente resuelto',
@@ -546,18 +570,20 @@ jobs:
               `**Fecha de inicio:** ${incident.fecha_inicio}`,
               `**Fecha de solución:** ${incidents[idx].fecha_solucion}`,
               `**MTTR:** ${mttrMinutes} minutos (${mttrHours} horas)`,
-              `**Severidad:** ${incident.severidad}`,
-              `**Servicio afectado:** ${incident.servicio_afectado}`,
+              `**Servicio afectado:** ${servicioAfectado}`,
               '',
               '---',
               '',
-              '### 📊 Métricas DORA — MTTR',
-              '| Métrica | Valor |',
-              '|---------|-------|',
-              `| MTTR este incidente | ${mttrMinutes} min (${mttrHours} h) |`,
-              `| MTTR promedio global | ${avgMttr} min |`,
-              `| Total incidentes resueltos | ${resueltos.length} |`,
-              `| Total incidentes abiertos | ${incidents.length - resueltos.length} |`
+              `### 📊 Métricas DORA — MTTR — ${servicioAfectado}`,
+              tableServicio,
+              `**MTTR promedio ${servicioAfectado}:** ${avgMttrServicio} minutos`,
+              `**Incidentes ${servicioAfectado}:** ${servicioIncidents.length} | **Resueltos:** ${servicioResueltos.length} | **Abiertos:** ${servicioIncidents.length - servicioResueltos.length}`,
+              '',
+              '---',
+              '',
+              '### 📋 Resumen general (todos los servicios)',
+              tableTotal,
+              `**Total global:** ${incidents.length} | **Resueltos:** ${totalResueltos.length} | **Abiertos:** ${totalAbiertos.length} | **MTTR promedio global:** ${avgMttrTotal} minutos`
             ].join('\n');
 
             await github.rest.issues.createComment({
