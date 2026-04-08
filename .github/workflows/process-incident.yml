@@ -2,7 +2,7 @@ name: Procesar Incidente
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened]
   issue_comment:
     types: [created]
 
@@ -13,10 +13,11 @@ permissions:
 jobs:
   register-incident:
     name: Registrar incidente
-    if: |
+    if: >-
       github.event_name == 'issues' &&
-      (github.event.action == 'opened' || github.event.action == 'labeled') &&
-      contains(github.event.issue.labels.*.name, 'incident')
+      github.event.action == 'opened' &&
+      (contains(github.event.issue.labels.*.name, 'incident') ||
+      startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repositorio
@@ -120,7 +121,7 @@ jobs:
 
             // --- Etiquetar issue ---
             const severidadLabel = (parsed.severidad || '').split(' - ')[0].trim().toLowerCase();
-            const labelsToAdd = [];
+            const labelsToAdd = ['incident'];
             if (severidadLabel) labelsToAdd.push(severidadLabel);
             labelsToAdd.push(estado === 'resuelto' ? 'resolved' : 'open');
 
@@ -195,11 +196,12 @@ jobs:
 
   resolve-incident:
     name: Resolver incidente via comando
-    if: |
+    if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
-      contains(github.event.issue.labels.*.name, 'incident') &&
-      startsWith(github.event.comment.body, '/resolver')
+      contains(github.event.comment.body, '/resolver') &&
+      (contains(github.event.issue.labels.*.name, 'incident') ||
+      startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repositorio
