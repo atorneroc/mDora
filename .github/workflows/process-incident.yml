@@ -34,9 +34,25 @@ jobs:
 
       - name: Parsear formulario del issue
         id: parse
-        uses: stefanbuck/github-issue-parser@v3
+        uses: issue-ops/parser@v4.0.0
         with:
-          template-path: .github/ISSUE_TEMPLATE/incident-report.yml
+          body: ${{ github.event.issue.body }}
+          issue-form-template: incident-report.yml
+
+      - name: Validar campos del formulario
+        id: validate
+        uses: issue-ops/validator@v4.0.0
+        with:
+          issue-form-template: incident-report.yml
+          parsed-issue-body: ${{ steps.parse.outputs.json }}
+          workspace: ${{ github.workspace }}
+          add-comment: true
+
+      - name: Detener si validación falla
+        if: steps.validate.outputs.result == 'failure'
+        run: |
+          echo "::error::Validación del formulario falló: ${{ steps.validate.outputs.errors }}"
+          exit 1
 
       - name: Procesar y guardar incidente
         uses: actions/github-script@v7
@@ -98,36 +114,20 @@ jobs:
               return;
             }
 
-            // --- Procesar fecha_solucion y MTTR ---
-            const fechaSolucionRaw = (parsed.fecha_solucion || '').trim();
-            let fechaSolucion = null;
-            let mttrMinutes = null;
-            let mttrHours = null;
-            let estado = 'abierto';
-
-            if (fechaSolucionRaw && dateRegex.test(fechaSolucionRaw)) {
-              const fsd = new Date(fechaSolucionRaw.replace(' ', 'T') + ':00');
-              if (!isNaN(fsd.getTime()) && fsd > fechaInicio) {
-                fechaSolucion = fsd;
-                mttrMinutes = Math.round((fechaSolucion - fechaInicio) / 60000);
-                mttrHours = parseFloat((mttrMinutes / 60).toFixed(2));
-                estado = 'resuelto';
-              }
-            }
-
             // --- Construir registro ---
-            const servicioAfectado = parsed.servicio_afectado || 'No especificado';
+            const tipoError = Array.isArray(parsed.tipo_error) ? parsed.tipo_error[0] : (parsed.tipo_error || 'No especificado');
+            const servicioAfectado = Array.isArray(parsed.servicio_afectado) ? parsed.servicio_afectado[0] : (parsed.servicio_afectado || 'No especificado');
             const incident = {
               id: context.issue.number,
               title: issue.title,
               fecha_inicio: fechaInicio.toISOString().replace('Z', '').split('.')[0],
-              fecha_solucion: fechaSolucion ? fechaSolucion.toISOString().replace('Z', '').split('.')[0] : null,
-              mttr_minutes: mttrMinutes,
-              mttr_hours: mttrHours,
-              tipo_error: parsed.tipo_error || 'No especificado',
+              fecha_solucion: null,
+              mttr_minutes: null,
+              mttr_hours: null,
+              tipo_error: tipoError,
               solicitante: parsed.solicitante || context.actor,
               servicio_afectado: servicioAfectado,
-              estado: estado,
+              estado: 'abierto',
               created_at: issue.created_at,
               issue_url: issue.html_url
             };
@@ -136,25 +136,12 @@ jobs:
             fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
 
             // --- Etiquetar issue ---
-            const labelsToAdd = ['incident'];
-            labelsToAdd.push(estado === 'resuelto' ? 'resolved' : 'open');
-
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              labels: labelsToAdd
+              labels: ['incident', 'open']
             });
-
-            // --- Cerrar issue si resuelto ---
-            if (estado === 'resuelto') {
-              await github.rest.issues.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                state: 'closed'
-              });
-            }
 
             // --- Comentar resumen (filtrado por servicio afectado) ---
             const servicioIncidents = incidents.filter(i => i.servicio_afectado === servicioAfectado);
@@ -175,10 +162,8 @@ jobs:
               `**ID:** #${incident.id}`,
               `**Tipo:** ${incident.tipo_error}`,
               `**Servicio afectado:** ${incident.servicio_afectado}`,
-              `**Estado:** ${incident.estado}`,
-              incident.mttr_minutes
-                ? `**MTTR:** ${incident.mttr_minutes} minutos (${incident.mttr_hours} horas)`
-                : '**MTTR:** ⏳ Pendiente de resolución',
+              '**Estado:** abierto',
+              '**MTTR:** ⏳ Pendiente de resolución',
               '',
               '---',
               '',
@@ -187,9 +172,7 @@ jobs:
               `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
               `**Incidentes ${servicioAfectado}:** ${servicioIncidents.length} | **Resueltos:** ${servicioResueltos.length} | **Abiertos:** ${servicioIncidents.length - servicioResueltos.length}`,
               '',
-              estado !== 'resuelto'
-                ? '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
-                : '> ✅ Este incidente fue registrado como resuelto.'
+              '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
             ].join('\n');
 
             await github.rest.issues.createComment({
@@ -201,7 +184,7 @@ jobs:
 
             core.exportVariable('INCIDENT_PROCESSED', 'true');
         env:
-          PARSED: ${{ steps.parse.outputs.jsonString }}
+          PARSED: ${{ steps.parse.outputs.json }}
 
       - name: Commit cambios
         if: env.INCIDENT_PROCESSED == 'true'
@@ -232,9 +215,10 @@ jobs:
 
       - name: Parsear formulario del issue
         id: parse
-        uses: stefanbuck/github-issue-parser@v3
+        uses: issue-ops/parser@v4.0.0
         with:
-          template-path: .github/ISSUE_TEMPLATE/incident-report.yml
+          body: ${{ github.event.issue.body }}
+          issue-form-template: incident-report.yml
 
       - name: Registrar con fecha corregida
         uses: actions/github-script@v7
@@ -280,39 +264,64 @@ jobs:
               incidents = [];
             }
 
-            // --- Inmutabilidad: si ya fue registrado, no permitir cambio ---
-            if (incidents.find(i => i.id === context.issue.number)) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: '⚠️ La **fecha de inicio** ya fue registrada y no se puede modificar.'
-              });
-              return;
+            // --- Verificar si ya existe el incidente ---
+            const existingIdx = incidents.findIndex(i => i.id === context.issue.number);
+            const tipoError = Array.isArray(parsed.tipo_error) ? parsed.tipo_error[0] : (parsed.tipo_error || 'No especificado');
+            const servicioAfectado = Array.isArray(parsed.servicio_afectado) ? parsed.servicio_afectado[0] : (parsed.servicio_afectado || 'No especificado');
+            let incident;
+            let wasUpdate = false;
+
+            if (existingIdx !== -1) {
+              // --- Actualizar fecha_inicio en incidente existente ---
+              incident = incidents[existingIdx];
+
+              // Validar contra fecha_fin existente si hay una
+              if (incident.fecha_solucion) {
+                const fechaFin = new Date(incident.fecha_solucion);
+                if (fechaInicio >= fechaFin) {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: context.issue.number,
+                    body: `❌ La nueva fecha de inicio (\`${fechaInicioRaw}\`) debe ser **anterior** a la fecha de solución actual (\`${incident.fecha_solucion}\`).`
+                  });
+                  core.setFailed('fecha_inicio posterior a fecha_solucion');
+                  return;
+                }
+                // Recalcular MTTR
+                const mttrMinutes = Math.round((fechaFin - fechaInicio) / 60000);
+                const mttrHours = parseFloat((mttrMinutes / 60).toFixed(2));
+                incident.mttr_minutes = mttrMinutes;
+                incident.mttr_hours = mttrHours;
+              }
+
+              incident.fecha_inicio = fechaInicio.toISOString().replace('Z', '').split('.')[0];
+              incidents[existingIdx] = incident;
+              wasUpdate = true;
+            } else {
+              // --- Registrar incidente nuevo con fecha corregida ---
+              incident = {
+                id: context.issue.number,
+                title: issue.title,
+                fecha_inicio: fechaInicio.toISOString().replace('Z', '').split('.')[0],
+                fecha_solucion: null,
+                mttr_minutes: null,
+                mttr_hours: null,
+                tipo_error: tipoError,
+                solicitante: parsed.solicitante || context.actor,
+                servicio_afectado: servicioAfectado,
+                estado: 'abierto',
+                created_at: issue.created_at,
+                issue_url: issue.html_url
+              };
+              incidents.push(incident);
             }
 
-            // --- Registrar incidente con fecha corregida ---
-            const servicioAfectado = parsed.servicio_afectado || 'No especificado';
-            const incident = {
-              id: context.issue.number,
-              title: issue.title,
-              fecha_inicio: fechaInicio.toISOString().replace('Z', '').split('.')[0],
-              fecha_solucion: null,
-              mttr_minutes: null,
-              mttr_hours: null,
-              tipo_error: parsed.tipo_error || 'No especificado',
-              solicitante: parsed.solicitante || context.actor,
-              servicio_afectado: servicioAfectado,
-              estado: 'abierto',
-              created_at: issue.created_at,
-              issue_url: issue.html_url
-            };
-
-            incidents.push(incident);
             fs.writeFileSync(filePath, JSON.stringify(incidents, null, 2) + '\n');
 
             // --- Etiquetar ---
-            const labelsToAdd = ['incident', 'open'];
+            const labelsToAdd = ['incident'];
+            labelsToAdd.push(incident.estado === 'resuelto' ? 'resolved' : 'open');
 
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
@@ -334,15 +343,24 @@ jobs:
               table += `| [#${inc.id}](${inc.issue_url}) | ${inc.title} | ${inc.estado} | ${inc.mttr_minutes ?? '⏳'} |\n`;
             }
 
+            const headerMsg = wasUpdate
+              ? '## 🔄 Fecha de inicio actualizada'
+              : '## 📋 Incidente registrado (fecha de inicio corregida)';
+
+            const mttrMsg = incident.mttr_minutes
+              ? `**MTTR:** ${incident.mttr_minutes} minutos (${incident.mttr_hours} horas) *(recalculado)*`
+              : '**MTTR:** ⏳ Pendiente de resolución';
+
             const body = [
-              '## 📋 Incidente registrado (fecha de inicio corregida)',
+              headerMsg,
               '',
               `**ID:** #${incident.id}`,
               `**Fecha de inicio:** ${incident.fecha_inicio}`,
+              incident.fecha_solucion ? `**Fecha de solución:** ${incident.fecha_solucion}` : null,
               `**Tipo:** ${incident.tipo_error}`,
               `**Servicio afectado:** ${incident.servicio_afectado}`,
-              `**Estado:** abierto`,
-              '**MTTR:** ⏳ Pendiente de resolución',
+              `**Estado:** ${incident.estado}`,
+              mttrMsg,
               '',
               '---',
               '',
@@ -351,8 +369,10 @@ jobs:
               `**MTTR promedio (resueltos):** ${avgMttr} minutos`,
               `**Incidentes ${servicioAfectado}:** ${servicioIncidents.length} | **Resueltos:** ${servicioResueltos.length} | **Abiertos:** ${servicioIncidents.length - servicioResueltos.length}`,
               '',
-              '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
-            ].join('\n');
+              incident.estado !== 'resuelto'
+                ? '> 💡 Para resolver este incidente, comenta: `/fecha_fin YYYY-MM-DD HH:MM`'
+                : '> ✅ Este incidente está resuelto. El MTTR fue recalculado.'
+            ].filter(Boolean).join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -363,7 +383,7 @@ jobs:
 
             core.exportVariable('INCIDENT_PROCESSED', 'true');
         env:
-          PARSED: ${{ steps.parse.outputs.jsonString }}
+          PARSED: ${{ steps.parse.outputs.json }}
 
       - name: Commit cambios
         if: env.INCIDENT_PROCESSED == 'true'
@@ -462,21 +482,7 @@ jobs:
             }
 
             const incident = incidents[idx];
-
-            // --- Inmutabilidad: verificar que no esté ya resuelto ---
-            if (incident.estado === 'resuelto') {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: [
-                  `⚠️ Este incidente ya fue resuelto el **${incident.fecha_solucion}** con un MTTR de **${incident.mttr_minutes} minutos**.`,
-                  '',
-                  'La fecha de solución no se puede modificar.'
-                ].join('\n')
-              });
-              return;
-            }
+            const wasAlreadyResolved = incident.estado === 'resuelto';
 
             // --- Validar fecha_solucion > fecha_inicio ---
             const fechaInicio = new Date(incident.fecha_inicio);
@@ -564,7 +570,9 @@ jobs:
             }
 
             const body = [
-              '## ✅ Incidente resuelto',
+              wasAlreadyResolved
+                ? '## 🔄 Fecha de solución actualizada'
+                : '## ✅ Incidente resuelto',
               '',
               `**ID:** #${incident.id}`,
               `**Fecha de inicio:** ${incident.fecha_inicio}`,
