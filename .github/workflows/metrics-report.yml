@@ -1,0 +1,236 @@
+name: Reporte de Métricas DORA (MTTR)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fecha_inicio:
+        description: 'Fecha inicio del rango (YYYY-MM-DD). Opcional: vacío = sin límite inferior'
+        required: false
+        default: ''
+      fecha_fin:
+        description: 'Fecha fin del rango (YYYY-MM-DD). Opcional: vacío = sin límite superior'
+        required: false
+        default: ''
+      proyecto:
+        description: 'Servicio afectado a filtrar. Opcional: vacío = todos los proyectos'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  generate-report:
+    name: Generar reporte de métricas
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generar reporte
+        id: report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // --- Parámetros ---
+            const fechaInicioParam = (process.env.INPUT_FECHA_INICIO || '').trim();
+            const fechaFinParam = (process.env.INPUT_FECHA_FIN || '').trim();
+            const proyectoParam = (process.env.INPUT_PROYECTO || '').trim();
+
+            // --- Validar formato de fechas si se proporcionan ---
+            const dateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
+            if (fechaInicioParam && !dateOnlyRegex.test(fechaInicioParam)) {
+              core.setFailed(`Formato de fecha_inicio inválido: "${fechaInicioParam}". Usa YYYY-MM-DD`);
+              return;
+            }
+            if (fechaFinParam && !dateOnlyRegex.test(fechaFinParam)) {
+              core.setFailed(`Formato de fecha_fin inválido: "${fechaFinParam}". Usa YYYY-MM-DD`);
+              return;
+            }
+
+            const rangeStart = fechaInicioParam ? new Date(fechaInicioParam + 'T00:00:00') : null;
+            const rangeEnd = fechaFinParam ? new Date(fechaFinParam + 'T23:59:59') : null;
+
+            if (rangeStart && isNaN(rangeStart.getTime())) {
+              core.setFailed(`fecha_inicio no es una fecha válida: "${fechaInicioParam}"`);
+              return;
+            }
+            if (rangeEnd && isNaN(rangeEnd.getTime())) {
+              core.setFailed(`fecha_fin no es una fecha válida: "${fechaFinParam}"`);
+              return;
+            }
+
+            // --- Leer incidentes ---
+            let allIncidents = [];
+            try {
+              allIncidents = JSON.parse(fs.readFileSync('data/incidents.json', 'utf8'));
+            } catch (e) {
+              core.setFailed('No se pudo leer data/incidents.json: ' + e.message);
+              return;
+            }
+
+            if (allIncidents.length === 0) {
+              await core.summary
+                .addHeading('📊 Reporte de Métricas DORA — MTTR', 2)
+                .addRaw('⚠️ No hay incidentes registrados.')
+                .write();
+              core.setOutput('csv_detail', 'ID,Titulo,Servicio,Tipo_Error,Solicitante,Estado,Fecha_Inicio,Fecha_Solucion,MTTR_min,MTTR_horas,URL\n');
+              core.setOutput('csv_summary', 'Servicio,Total,Resueltos,Abiertos,MTTR_prom_min\n');
+              return;
+            }
+
+            // --- Filtrar por rango de fechas (basado en fecha_inicio del incidente) ---
+            let filtered = allIncidents;
+            if (rangeStart) {
+              filtered = filtered.filter(i => new Date(i.fecha_inicio) >= rangeStart);
+            }
+            if (rangeEnd) {
+              filtered = filtered.filter(i => new Date(i.fecha_inicio) <= rangeEnd);
+            }
+
+            // --- Filtrar por proyecto ---
+            if (proyectoParam) {
+              filtered = filtered.filter(i =>
+                i.servicio_afectado.toLowerCase() === proyectoParam.toLowerCase()
+              );
+            }
+
+            // --- Descripción de filtros aplicados ---
+            const filterParts = [];
+            if (fechaInicioParam) filterParts.push(`Desde: **${fechaInicioParam}**`);
+            if (fechaFinParam) filterParts.push(`Hasta: **${fechaFinParam}**`);
+            if (proyectoParam) filterParts.push(`Proyecto: **${proyectoParam}**`);
+            const filterDesc = filterParts.length > 0
+              ? filterParts.join(' | ')
+              : 'Sin filtros (todos los incidentes)';
+
+            // ═══════════════════════════════════════════
+            // TABLA 1: Detalle de incidentes
+            // ═══════════════════════════════════════════
+            const detailRows = filtered.map(i => [
+              { data: `<a href="${i.issue_url}">#${i.id}</a>` },
+              { data: (i.title || '').replace(/\|/g, '-') },
+              { data: i.servicio_afectado },
+              { data: i.tipo_error },
+              { data: i.solicitante },
+              { data: i.estado },
+              { data: (i.fecha_inicio || '').replace('T', ' ').slice(0, 16) },
+              { data: i.fecha_solucion ? i.fecha_solucion.replace('T', ' ').slice(0, 16) : '-' },
+              { data: i.mttr_minutes != null ? String(i.mttr_minutes) : '-' },
+              { data: i.mttr_hours != null ? String(i.mttr_hours) : '-' }
+            ]);
+
+            // ═══════════════════════════════════════════
+            // TABLA 2: Resumen agrupado por proyecto
+            // ═══════════════════════════════════════════
+            const servicios = [...new Set(filtered.map(i => i.servicio_afectado))].sort();
+            const summaryData = servicios.map(svc => {
+              const svcAll = filtered.filter(i => i.servicio_afectado === svc);
+              const svcResueltos = svcAll.filter(i => i.estado === 'resuelto');
+              const svcAbiertos = svcAll.filter(i => i.estado === 'abierto');
+              const svcMttr = svcResueltos.length > 0
+                ? (svcResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / svcResueltos.length).toFixed(1)
+                : 'N/A';
+              return { svc, total: svcAll.length, resueltos: svcResueltos.length, abiertos: svcAbiertos.length, mttr: svcMttr };
+            });
+
+            const totalAll = filtered.length;
+            const totalResueltos = filtered.filter(i => i.estado === 'resuelto');
+            const totalAbiertos = filtered.filter(i => i.estado === 'abierto');
+            const avgMttrGlobal = totalResueltos.length > 0
+              ? (totalResueltos.reduce((sum, i) => sum + (i.mttr_minutes || 0), 0) / totalResueltos.length).toFixed(1)
+              : 'N/A';
+
+            const summaryRows = summaryData.map(s => [
+              { data: s.svc },
+              { data: String(s.total) },
+              { data: String(s.resueltos) },
+              { data: String(s.abiertos) },
+              { data: s.mttr }
+            ]);
+
+            // ═══════════════════════════════════════════
+            // Job Summary (Markdown)
+            // ═══════════════════════════════════════════
+            const summary = core.summary
+              .addHeading('📊 Reporte de Métricas DORA — MTTR', 2)
+              .addRaw(`📅 Generado: ${new Date().toISOString().split('T')[0]}  \n`)
+              .addRaw(`🔎 Filtros: ${filterDesc}  \n`)
+              .addRaw(`📈 **${totalAll}** incidentes | **${totalResueltos.length}** resueltos | **${totalAbiertos.length}** abiertos | **MTTR promedio global:** ${avgMttrGlobal} min\n\n`);
+
+            if (filtered.length === 0) {
+              summary.addRaw('⚠️ No hay incidentes que coincidan con los filtros aplicados.\n');
+            } else {
+              summary.addHeading('📋 Detalle de incidentes', 3);
+              summary.addTable([
+                [
+                  { data: '#', header: true },
+                  { data: 'Título', header: true },
+                  { data: 'Servicio', header: true },
+                  { data: 'Tipo Error', header: true },
+                  { data: 'Solicitante', header: true },
+                  { data: 'Estado', header: true },
+                  { data: 'Fecha Inicio', header: true },
+                  { data: 'Fecha Solución', header: true },
+                  { data: 'MTTR (min)', header: true },
+                  { data: 'MTTR (hrs)', header: true }
+                ],
+                ...detailRows
+              ]);
+
+              summary.addHeading('📊 Resumen por servicio', 3);
+              summary.addTable([
+                [
+                  { data: 'Servicio', header: true },
+                  { data: 'Total', header: true },
+                  { data: 'Resueltos', header: true },
+                  { data: 'Abiertos', header: true },
+                  { data: 'MTTR prom. (min)', header: true }
+                ],
+                ...summaryRows
+              ]);
+
+              summary.addRaw(`\n**Total global:** ${totalAll} | **Resueltos:** ${totalResueltos.length} | **Abiertos:** ${totalAbiertos.length} | **MTTR promedio global:** ${avgMttrGlobal} minutos\n`);
+            }
+
+            await summary.write();
+
+            // ═══════════════════════════════════════════
+            // CSV Detalle
+            // ═══════════════════════════════════════════
+            const csvDetailHeader = 'ID,Titulo,Servicio,Tipo_Error,Solicitante,Estado,Fecha_Inicio,Fecha_Solucion,MTTR_min,MTTR_horas,URL';
+            const csvDetailRows = filtered.map(i =>
+              `${i.id},"${(i.title || '').replace(/"/g, '""')}","${i.servicio_afectado}","${i.tipo_error}","${i.solicitante}",${i.estado},${(i.fecha_inicio || '').replace('T', ' ').slice(0, 16)},${i.fecha_solucion ? i.fecha_solucion.replace('T', ' ').slice(0, 16) : ''},${i.mttr_minutes ?? ''},${i.mttr_hours ?? ''},${i.issue_url}`
+            );
+            const csvDetail = [csvDetailHeader, ...csvDetailRows].join('\n') + '\n';
+
+            // ═══════════════════════════════════════════
+            // CSV Resumen
+            // ═══════════════════════════════════════════
+            const csvSummaryHeader = 'Servicio,Total,Resueltos,Abiertos,MTTR_prom_min';
+            const csvSummaryRows = summaryData.map(s =>
+              `"${s.svc}",${s.total},${s.resueltos},${s.abiertos},${s.mttr}`
+            );
+            const csvSummary = [csvSummaryHeader, ...csvSummaryRows].join('\n') + '\n';
+
+            // Escribir archivos para artifact
+            fs.mkdirSync('metrics-report', { recursive: true });
+            fs.writeFileSync('metrics-report/incidents-detail.csv', csvDetail);
+            fs.writeFileSync('metrics-report/incidents-summary.csv', csvSummary);
+
+            core.info(`Reporte generado: ${filtered.length} incidentes, ${servicios.length} servicios.`);
+        env:
+          INPUT_FECHA_INICIO: ${{ inputs.fecha_inicio }}
+          INPUT_FECHA_FIN: ${{ inputs.fecha_fin }}
+          INPUT_PROYECTO: ${{ inputs.proyecto }}
+
+      - name: Subir artefacto CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-report-${{ github.run_id }}
+          path: metrics-report/
+          retention-days: 30

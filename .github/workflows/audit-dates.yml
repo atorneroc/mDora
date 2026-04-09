@@ -162,39 +162,46 @@ jobs:
                   });
                 }
 
-                // --- Comentar en el issue (sin duplicar por día) ---
+                // --- Comentar en el issue (actualiza si ya existe uno de hoy, sino crea nuevo) ---
                 const recentComments = await github.rest.issues.listComments({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
-                  per_page: 20
+                  per_page: 50
                 });
 
-                const today = new Date().toISOString().split('T')[0];
-                const alreadyNotified = recentComments.data.some(c =>
+                const existingAuditComment = recentComments.data.find(c =>
                   c.user.login === 'github-actions[bot]' &&
-                  c.body.includes('🔍 **Auditoría de fechas**') &&
-                  c.created_at.startsWith(today)
+                  c.body.includes('🔍 **Auditoría de fechas**')
                 );
 
-                if (!alreadyNotified) {
-                  const bullets = issueProblems.map(p =>
-                    `- **${p.field}:** ${p.problem}${p.value !== '-' ? ` → \`${p.value}\`` : ''}`
-                  );
+                const bullets = issueProblems.map(p =>
+                  `- **${p.field}:** ${p.problem}${p.value !== '-' ? ` → \`${p.value}\`` : ''}`
+                );
+                const commentBody = [
+                  `🔍 **Auditoría de fechas** (${new Date().toISOString().split('T')[0]}) — Se detectaron problemas en este incidente:`,
+                  '',
+                  ...bullets,
+                  '',
+                  'Formato esperado: `YYYY-MM-DD HH:MM` (ejemplo: `2026-04-08 09:30`)',
+                  '',
+                  '> 💡 Para corregir la fecha de inicio: `/fecha_inicio YYYY-MM-DD HH:MM`',
+                  '> 💡 Para registrar la fecha de solución: `/fecha_fin YYYY-MM-DD HH:MM`'
+                ].join('\n');
+
+                if (existingAuditComment) {
+                  await github.rest.issues.updateComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    comment_id: existingAuditComment.id,
+                    body: commentBody
+                  });
+                } else {
                   await github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: issue.number,
-                    body: [
-                      '🔍 **Auditoría de fechas** — Se detectaron problemas en este incidente:',
-                      '',
-                      ...bullets,
-                      '',
-                      'Formato esperado: `YYYY-MM-DD HH:MM` (ejemplo: `2026-04-08 09:30`)',
-                      '',
-                      '> 💡 Para corregir la fecha de inicio: `/fecha_inicio YYYY-MM-DD HH:MM`',
-                      '> 💡 Para registrar la fecha de solución: `/fecha_fin YYYY-MM-DD HH:MM`'
-                    ].join('\n')
+                    body: commentBody
                   });
                 }
               }
