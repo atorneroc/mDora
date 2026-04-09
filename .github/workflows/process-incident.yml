@@ -11,7 +11,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: incident-json-lock
+  group: incident-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
@@ -191,9 +191,34 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/incidents.json
-          git diff --cached --quiet || git commit -m "📝 Registrar incidente #${{ github.event.issue.number }}"
-          git push
+          cp data/incidents.json /tmp/our_incidents.json
+          ISSUE_ID=${{ github.event.issue.number }}
+          COMMIT_MSG="📝 Registrar incidente #${ISSUE_ID}"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            node -e "
+              const fs = require('fs');
+              const issueId = ${ISSUE_ID};
+              const ours = JSON.parse(fs.readFileSync('/tmp/our_incidents.json','utf8'));
+              let theirs = [];
+              try { theirs = JSON.parse(fs.readFileSync('data/incidents.json','utf8')); } catch(e) {}
+              const ourIncident = ours.find(i => i.id === issueId);
+              const map = new Map();
+              for (const i of theirs) map.set(i.id, i);
+              if (ourIncident) map.set(issueId, ourIncident);
+              const merged = [...map.values()].sort((a,b) => a.id - b.id);
+              fs.writeFileSync('data/incidents.json', JSON.stringify(merged, null, 2) + '\n');
+            "
+            git add data/incidents.json
+            git diff --cached --quiet && { echo 'Sin cambios'; exit 0; }
+            git commit -m "$COMMIT_MSG"
+            git push && exit 0
+            echo "Reintento $i..."
+            sleep $((i * 2))
+          done
+          echo "Error: no se pudo hacer push después de 5 intentos"
+          exit 1
 
   # ──────────────────────────────────────────────────────
   # JOB 2: Corregir fecha de inicio via /fecha_inicio
@@ -390,9 +415,34 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/incidents.json
-          git diff --cached --quiet || git commit -m "📝 Registrar incidente #${{ github.event.issue.number }} (fecha corregida)"
-          git push
+          cp data/incidents.json /tmp/our_incidents.json
+          ISSUE_ID=${{ github.event.issue.number }}
+          COMMIT_MSG="📝 Registrar incidente #${ISSUE_ID} (fecha corregida)"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            node -e "
+              const fs = require('fs');
+              const issueId = ${ISSUE_ID};
+              const ours = JSON.parse(fs.readFileSync('/tmp/our_incidents.json','utf8'));
+              let theirs = [];
+              try { theirs = JSON.parse(fs.readFileSync('data/incidents.json','utf8')); } catch(e) {}
+              const ourIncident = ours.find(i => i.id === issueId);
+              const map = new Map();
+              for (const i of theirs) map.set(i.id, i);
+              if (ourIncident) map.set(issueId, ourIncident);
+              const merged = [...map.values()].sort((a,b) => a.id - b.id);
+              fs.writeFileSync('data/incidents.json', JSON.stringify(merged, null, 2) + '\n');
+            "
+            git add data/incidents.json
+            git diff --cached --quiet && { echo 'Sin cambios'; exit 0; }
+            git commit -m "$COMMIT_MSG"
+            git push && exit 0
+            echo "Reintento $i..."
+            sleep $((i * 2))
+          done
+          echo "Error: no se pudo hacer push después de 5 intentos"
+          exit 1
 
   # ──────────────────────────────────────────────
   # JOB 3: Resolver incidente via /fecha_fin
@@ -608,6 +658,31 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/incidents.json
-          git diff --cached --quiet || git commit -m "✅ Resolver incidente #${{ github.event.issue.number }}"
-          git push
+          cp data/incidents.json /tmp/our_incidents.json
+          ISSUE_ID=${{ github.event.issue.number }}
+          COMMIT_MSG="✅ Resolver incidente #${ISSUE_ID}"
+          for i in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            node -e "
+              const fs = require('fs');
+              const issueId = ${ISSUE_ID};
+              const ours = JSON.parse(fs.readFileSync('/tmp/our_incidents.json','utf8'));
+              let theirs = [];
+              try { theirs = JSON.parse(fs.readFileSync('data/incidents.json','utf8')); } catch(e) {}
+              const ourIncident = ours.find(i => i.id === issueId);
+              const map = new Map();
+              for (const i of theirs) map.set(i.id, i);
+              if (ourIncident) map.set(issueId, ourIncident);
+              const merged = [...map.values()].sort((a,b) => a.id - b.id);
+              fs.writeFileSync('data/incidents.json', JSON.stringify(merged, null, 2) + '\n');
+            "
+            git add data/incidents.json
+            git diff --cached --quiet && { echo 'Sin cambios'; exit 0; }
+            git commit -m "$COMMIT_MSG"
+            git push && exit 0
+            echo "Reintento $i..."
+            sleep $((i * 2))
+          done
+          echo "Error: no se pudo hacer push después de 5 intentos"
+          exit 1
