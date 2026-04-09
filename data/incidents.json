@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "id": 10,
+    "title": "[INCIDENTE]",
+    "fecha_inicio": "2026-01-01T10:10:00",
+    "fecha_solucion": null,
+    "mttr_minutes": null,
+    "mttr_hours": null,
+    "tipo_error": "Infraestructura",
+    "solicitante": "AAA",
+    "servicio_afectado": "Proyecto A",
+    "estado": "abierto",
+    "created_at": "2026-04-09T20:00:02Z",
+    "issue_url": "https://github.com/atorneroc/mDora/issues/10"
+  }
+]
