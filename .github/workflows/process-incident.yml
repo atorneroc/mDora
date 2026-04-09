@@ -11,7 +11,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: incident-${{ github.event.issue.number }}
+  group: incident-json-lock
   cancel-in-progress: false
 
 jobs:
