@@ -7,8 +7,7 @@ on:
     types: [created]
 
 permissions:
-  contents: write
-  issues: write
+  contents: read
 
 concurrency:
   group: incident-${{ github.event.issue.number }}
@@ -27,10 +26,18 @@ jobs:
       startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
     steps:
+      - name: Generar token de GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Checkout repositorio
         uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Parsear formulario del issue
         id: parse
@@ -47,6 +54,7 @@ jobs:
           parsed-issue-body: ${{ steps.parse.outputs.json }}
           workspace: ${{ github.workspace }}
           add-comment: true
+          github-token: ${{ steps.app-token.outputs.token }}
 
       - name: Detener si validación falla
         if: steps.validate.outputs.result == 'failure'
@@ -57,6 +65,7 @@ jobs:
       - name: Procesar y guardar incidente
         uses: actions/github-script@v7
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require('fs');
             const parsed = JSON.parse(process.env.PARSED);
@@ -233,10 +242,18 @@ jobs:
       startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
     steps:
+      - name: Generar token de GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Checkout repositorio
         uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Parsear formulario del issue
         id: parse
@@ -248,6 +265,7 @@ jobs:
       - name: Registrar con fecha corregida
         uses: actions/github-script@v7
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require('fs');
             const parsed = JSON.parse(process.env.PARSED);
@@ -457,14 +475,23 @@ jobs:
       startsWith(github.event.issue.title, '[INCIDENTE]'))
     runs-on: ubuntu-latest
     steps:
+      - name: Generar token de GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - name: Checkout repositorio
         uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Resolver incidente
         uses: actions/github-script@v7
         with:
+          github-token: ${{ steps.app-token.outputs.token }}
           script: |
             const fs = require('fs');
             const commandText = context.payload.comment.body.trim();
