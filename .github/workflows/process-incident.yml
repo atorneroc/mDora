@@ -237,6 +237,7 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
+      github.event.comment.user.type != 'Bot' &&
       contains(github.event.comment.body, '/fecha_inicio') &&
       (contains(github.event.issue.labels.*.name, 'incident') ||
       startsWith(github.event.issue.title, '[INCIDENTE]'))
@@ -470,6 +471,7 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
+      github.event.comment.user.type != 'Bot' &&
       contains(github.event.comment.body, '/fecha_fin') &&
       (contains(github.event.issue.labels.*.name, 'incident') ||
       startsWith(github.event.issue.title, '[INCIDENTE]'))
