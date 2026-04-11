@@ -32,6 +32,7 @@ jobs:
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: CCAPITAL-PLATFORM
 
       - name: Checkout repositorio
         uses: actions/checkout@v4
@@ -249,6 +250,7 @@ jobs:
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: CCAPITAL-PLATFORM
 
       - name: Checkout repositorio
         uses: actions/checkout@v4
@@ -483,6 +485,7 @@ jobs:
         with:
           app-id: ${{ secrets.GH_APP_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: CCAPITAL-PLATFORM
 
       - name: Checkout repositorio
         uses: actions/checkout@v4

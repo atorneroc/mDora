@@ -1,0 +1,86 @@
+name: Reporte de Cycle Time
+
+on:
+  workflow_dispatch:
+    inputs:
+      org:
+        description: 'Organización de GitHub (requerido)'
+        required: true
+        default: 'CCAPITAL-APPS'
+      topic:
+        description: 'Topic para filtrar repositorios (requerido)'
+        required: true
+        default: 'tribu-canal-digital'
+      repo:
+        description: 'Repositorio específico (opcional: vacío = todos)'
+        required: false
+        default: ''
+      total_shards:
+        description: 'Número de shards en que se divide la carga (requerido)'
+        required: true
+        default: '1'
+      shard_id:
+        description: 'Shard específico a ejecutar (opcional: vacío = todos secuencialmente)'
+        required: false
+        default: ''
+      ref_run_id:
+        description: 'ID del Action run anterior para completar shards fallidos (opcional)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  cycle-time:
+    name: Cycle Time (${{ inputs.shard_id && format('shard {0}/{1}', inputs.shard_id, inputs.total_shards) || format('todos {0} shards', inputs.total_shards) }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Generar token de GitHub App
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ inputs.org }}
+
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Restaurar datos del run anterior
+        if: inputs.ref_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cycle-time-report-*
+          run-id: ${{ inputs.ref_run_id }}
+          path: cycle-time-report
+          github-token: ${{ steps.app-token.outputs.token }}
+          merge-multiple: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Ejecutar cálculo de Cycle Time
+        run: python scripts/cycle_time.py
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          INPUT_ORG: ${{ inputs.org }}
+          INPUT_TOPIC: ${{ inputs.topic }}
+          INPUT_REPO: ${{ inputs.repo }}
+          TOTAL_SHARDS: ${{ inputs.total_shards }}
+          SHARD_ID: ${{ inputs.shard_id }}
+          OUTPUT_DIR: cycle-time-report
+
+      - name: Subir artefacto CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cycle-time-report-${{ inputs.shard_id && format('shard-{0}-of-{1}', inputs.shard_id, inputs.total_shards) || format('all-{0}-shards', inputs.total_shards) }}-${{ github.run_id }}
+          path: cycle-time-report/
+          retention-days: 30
